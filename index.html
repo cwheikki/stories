@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hot-Swapping Credentials in a Docker Sandbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+  :root {
+    --bg-deep: #07070c;
+    --bg-surface: #0e0e16;
+    --bg-elevated: #14141f;
+    --bg-card: #1a1a28;
+    --amber: #d4a574;
+    --amber-bright: #e8c88a;
+    --amber-dim: #9a7450;
+    --green: #5a9c6b;
+    --green-bright: #7dd694;
+    --green-dim: #3a6b48;
+    --red: #c45c4c;
+    --red-bright: #e87a6a;
+    --red-dim: #8a3a30;
+    --text-primary: #e0d8cc;
+    --text-secondary: #8a8478;
+    --text-dim: #5a564e;
+    --text-code: #c8bfb0;
+    --terminal-green: #4af07a;
+    --terminal-bg: #0c1210;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: var(--amber-dim) var(--bg-deep);
+  }
+
+  body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 18px;
+    line-height: 1.75;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== NOISE OVERLAY ===== */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 256px 256px;
+  }
+
+  /* ===== PROGRESS BAR ===== */
+  .progress-track {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    z-index: 1000;
+    background: var(--bg-deep);
+  }
+  .progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--amber-dim), var(--amber), var(--amber-bright));
+    transition: width 0.15s ease-out;
+    box-shadow: 0 0 12px var(--amber-dim);
+  }
+
+  /* ===== HERO ===== */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 2rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 600px 400px at 50% 40%, rgba(212,165,116,0.06) 0%, transparent 70%),
+      radial-gradient(ellipse 300px 500px at 30% 60%, rgba(90,156,107,0.03) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .hero-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--amber-dim);
+    margin-bottom: 2.5rem;
+    opacity: 0;
+    animation: fadeUp 0.8s ease 0.3s forwards;
+  }
+
+  .hero h1 {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-size: clamp(2.8rem, 7vw, 5.5rem);
+    font-weight: 400;
+    line-height: 1.1;
+    color: var(--text-primary);
+    max-width: 14ch;
+    opacity: 0;
+    animation: fadeUp 1s ease 0.5s forwards;
+  }
+
+  .hero h1 em {
+    font-style: italic;
+    color: var(--amber);
+  }
+
+  .hero-subtitle {
+    font-size: 1.15rem;
+    color: var(--text-secondary);
+    max-width: 42ch;
+    margin-top: 2rem;
+    font-weight: 300;
+    opacity: 0;
+    animation: fadeUp 0.8s ease 0.9s forwards;
+  }
+
+  .hero-scroll {
+    position: absolute;
+    bottom: 3rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    opacity: 0;
+    animation: fadeUp 0.8s ease 1.4s forwards;
+  }
+  .hero-scroll span {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .hero-scroll .arrow {
+    width: 1px;
+    height: 40px;
+    background: linear-gradient(to bottom, var(--amber-dim), transparent);
+    animation: pulse-arrow 2s ease infinite;
+  }
+
+  /* ===== CHAPTER NAV ===== */
+  .chapter-nav {
+    position: fixed;
+    right: 2rem;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+    align-items: flex-end;
+  }
+  .chapter-nav a {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    text-decoration: none;
+    color: var(--text-dim);
+    transition: color 0.3s;
+  }
+  .chapter-nav a:hover,
+  .chapter-nav a.active {
+    color: var(--amber);
+  }
+  .chapter-nav .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: all 0.3s;
+    flex-shrink: 0;
+  }
+  .chapter-nav a:hover .dot,
+  .chapter-nav a.active .dot {
+    background: var(--amber);
+    box-shadow: 0 0 8px var(--amber-dim);
+    transform: scale(1.4);
+  }
+  .chapter-nav .label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateX(8px);
+    transition: all 0.3s;
+  }
+  .chapter-nav a:hover .label,
+  .chapter-nav a.active .label {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  /* ===== SECTIONS ===== */
+  .section {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 6rem 2rem;
+  }
+
+  .section-wide {
+    max-width: 900px;
+  }
+
+  /* ===== CHAPTER HEADERS ===== */
+  .chapter-header {
+    margin-bottom: 3rem;
+  }
+  .chapter-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.35em;
+    text-transform: uppercase;
+    color: var(--amber-dim);
+    margin-bottom: 1rem;
+    display: block;
+  }
+  .chapter-title {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-size: clamp(2rem, 5vw, 3.2rem);
+    font-weight: 400;
+    line-height: 1.15;
+    color: var(--text-primary);
+  }
+
+  /* ===== REVEAL ANIMATIONS ===== */
+  .reveal {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.7s ease, transform 0.7s ease;
+  }
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .reveal-delay-1 { transition-delay: 0.1s; }
+  .reveal-delay-2 { transition-delay: 0.2s; }
+  .reveal-delay-3 { transition-delay: 0.3s; }
+
+  /* ===== PROSE ===== */
+  .prose p {
+    margin-bottom: 1.5rem;
+    color: var(--text-primary);
+  }
+  .prose strong {
+    color: var(--amber-bright);
+    font-weight: 600;
+  }
+  .prose em {
+    font-style: italic;
+    color: var(--text-secondary);
+  }
+
+  /* ===== TERMINAL BLOCKS ===== */
+  .terminal {
+    background: var(--terminal-bg);
+    border: 1px solid rgba(74, 240, 122, 0.1);
+    border-radius: 8px;
+    margin: 2rem 0;
+    overflow: hidden;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82rem;
+    line-height: 1.65;
+  }
+  .terminal-bar {
+    background: rgba(74, 240, 122, 0.05);
+    padding: 0.5rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 1px solid rgba(74, 240, 122, 0.08);
+  }
+  .terminal-bar .dots {
+    display: flex;
+    gap: 5px;
+  }
+  .terminal-bar .dots span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.1);
+  }
+  .terminal-bar .title {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 0.05em;
+    margin-left: 0.5rem;
+  }
+  .terminal pre {
+    padding: 1.25rem 1.5rem;
+    overflow-x: auto;
+    color: var(--terminal-green);
+    margin: 0;
+  }
+  .terminal pre .comment {
+    color: #5a6a5e;
+  }
+  .terminal pre .string {
+    color: #e8c88a;
+  }
+  .terminal pre .cmd {
+    color: #7dd694;
+  }
+  .terminal pre .flag {
+    color: #8a9cc8;
+  }
+  .terminal pre .path {
+    color: #c8bfb0;
+  }
+  .terminal pre .prompt {
+    color: var(--amber-dim);
+  }
+
+  /* ===== ATTEMPT CARDS ===== */
+  .attempt-card {
+    position: relative;
+    background: var(--bg-surface);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 12px;
+    padding: 3rem 2.5rem;
+    margin: 3rem 0;
+    overflow: hidden;
+  }
+  .attempt-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+  }
+  .attempt-card.failed::before {
+    background: linear-gradient(90deg, var(--red-dim), var(--red), var(--red-dim));
+  }
+  .attempt-card.success::before {
+    background: linear-gradient(90deg, var(--green-dim), var(--green), var(--green-bright));
+  }
+
+  .attempt-stamp {
+    position: absolute;
+    top: 1.5rem;
+    right: 1.5rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    padding: 0.3rem 0.8rem;
+    border-radius: 3px;
+    font-weight: 600;
+  }
+  .attempt-stamp.dead-end {
+    color: var(--red);
+    border: 1px solid var(--red-dim);
+    background: rgba(196, 92, 76, 0.08);
+  }
+  .attempt-stamp.breakthrough {
+    color: var(--green-bright);
+    border: 1px solid var(--green-dim);
+    background: rgba(90, 156, 107, 0.08);
+    animation: glow-green 3s ease infinite;
+  }
+
+  .attempt-card h3 {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-size: 1.6rem;
+    font-weight: 400;
+    margin-bottom: 1.5rem;
+    color: var(--text-primary);
+  }
+
+  /* ===== FAILURE / TAKEAWAY CALLOUTS ===== */
+  .callout {
+    padding: 1.25rem 1.5rem;
+    border-radius: 6px;
+    margin: 1.5rem 0;
+    font-size: 0.95rem;
+  }
+  .callout-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+    display: block;
+  }
+  .callout.failure {
+    background: rgba(196, 92, 76, 0.06);
+    border-left: 3px solid var(--red-dim);
+  }
+  .callout.failure .callout-label { color: var(--red); }
+
+  .callout.insight {
+    background: rgba(212, 165, 116, 0.06);
+    border-left: 3px solid var(--amber-dim);
+  }
+  .callout.insight .callout-label { color: var(--amber); }
+
+  .callout.success-note {
+    background: rgba(90, 156, 107, 0.06);
+    border-left: 3px solid var(--green-dim);
+  }
+  .callout.success-note .callout-label { color: var(--green-bright); }
+
+  /* ===== RECON GRID ===== */
+  .recon-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    margin: 2rem 0;
+  }
+  .recon-item {
+    background: var(--bg-elevated);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 1rem;
+    align-items: start;
+  }
+  .recon-cmd {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--terminal-green);
+    background: var(--terminal-bg);
+    padding: 0.3rem 0.6rem;
+    border-radius: 4px;
+    white-space: nowrap;
+    align-self: center;
+  }
+  .recon-result {
+    font-size: 0.92rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+  .recon-result .highlight {
+    color: var(--amber-bright);
+    font-weight: 500;
+  }
+  .recon-item.pivotal {
+    border-color: var(--amber-dim);
+    background: rgba(212, 165, 116, 0.04);
+  }
+  .recon-item.pivotal .recon-result {
+    color: var(--text-primary);
+  }
+
+  /* ===== DISCOVERY SECTION ===== */
+  .discovery-section {
+    position: relative;
+    padding: 6rem 0;
+  }
+  .discovery-section::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 800px 500px at 50% 50%, rgba(90,156,107,0.06) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  /* ===== SOLUTION DIAGRAM ===== */
+  .diagram {
+    margin: 3rem 0;
+    padding: 2rem;
+    background: var(--bg-surface);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 12px;
+  }
+  .diagram-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 1.5rem;
+  }
+  .flow-chain {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    flex-wrap: wrap;
+    padding: 1rem 0;
+  }
+  .flow-node {
+    text-align: center;
+    padding: 0.75rem 1.2rem;
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+  .flow-node.cmd {
+    background: var(--bg-elevated);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text-primary);
+  }
+  .flow-node.wrapper {
+    background: rgba(212, 165, 116, 0.1);
+    border: 1px solid var(--amber-dim);
+    color: var(--amber-bright);
+  }
+  .flow-node.env {
+    background: rgba(90, 156, 107, 0.1);
+    border: 1px solid var(--green-dim);
+    color: var(--green-bright);
+  }
+  .flow-node.binary {
+    background: rgba(200, 191, 176, 0.08);
+    border: 1px solid rgba(200, 191, 176, 0.2);
+    color: var(--text-code);
+  }
+  .flow-arrow {
+    color: var(--text-dim);
+    font-size: 1.2rem;
+    padding: 0 0.5rem;
+    flex-shrink: 0;
+  }
+
+  /* ===== STEPS LIST ===== */
+  .steps-list {
+    list-style: none;
+    counter-reset: steps;
+    margin: 2rem 0;
+  }
+  .steps-list li {
+    counter-increment: steps;
+    position: relative;
+    padding-left: 3.5rem;
+    margin-bottom: 2.5rem;
+  }
+  .steps-list li::before {
+    content: counter(steps);
+    position: absolute;
+    left: 0;
+    top: 0.15rem;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    background: var(--bg-elevated);
+    border: 1px solid var(--amber-dim);
+    color: var(--amber);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .steps-list li h4 {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-size: 1.15rem;
+    font-weight: 400;
+    color: var(--text-primary);
+    margin-bottom: 0.75rem;
+  }
+  .steps-list li p {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+  }
+
+  /* ===== THREE PILLARS ===== */
+  .pillars {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    margin: 2.5rem 0;
+  }
+  .pillar {
+    background: var(--bg-elevated);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 10px;
+    padding: 1.75rem 1.5rem;
+    text-align: center;
+  }
+  .pillar-icon {
+    font-size: 1.5rem;
+    margin-bottom: 0.75rem;
+    display: block;
+  }
+  .pillar h4 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 0.75rem;
+  }
+  .pillar p {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  /* ===== FINAL WORKFLOW ===== */
+  .workflow-block {
+    background: var(--bg-surface);
+    border: 1px solid rgba(90, 156, 107, 0.15);
+    border-radius: 12px;
+    padding: 2.5rem;
+    margin: 2rem 0;
+    position: relative;
+    overflow: hidden;
+  }
+  .workflow-block::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--green-dim), var(--green-bright), var(--green-dim));
+  }
+
+  /* ===== DIVIDER ===== */
+  .divider {
+    width: 60px;
+    height: 1px;
+    background: var(--amber-dim);
+    margin: 5rem auto;
+    position: relative;
+  }
+  .divider::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 6px;
+    height: 6px;
+    background: var(--amber);
+    border-radius: 50%;
+  }
+
+  /* ===== FOOTER ===== */
+  .footer {
+    text-align: center;
+    padding: 4rem 2rem 3rem;
+    border-top: 1px solid rgba(255,255,255,0.04);
+    margin-top: 4rem;
+  }
+  .footer p {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+
+  /* ===== EXEC EXPLAINER ===== */
+  .exec-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .exec-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    font-size: 0.92rem;
+    color: var(--text-secondary);
+  }
+  .exec-check {
+    color: var(--green);
+    font-size: 1rem;
+    flex-shrink: 0;
+    margin-top: 0.15rem;
+  }
+
+  /* ===== KEYFRAMES ===== */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulse-arrow {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 0.8; }
+  }
+  @keyframes glow-green {
+    0%, 100% { box-shadow: 0 0 0 rgba(90, 156, 107, 0); }
+    50% { box-shadow: 0 0 12px rgba(90, 156, 107, 0.15); }
+  }
+
+  /* ===== RESPONSIVE ===== */
+  @media (max-width: 768px) {
+    .chapter-nav { display: none; }
+    .section { padding: 4rem 1.5rem; }
+    .attempt-card { padding: 2rem 1.5rem; }
+    .pillars { grid-template-columns: 1fr; }
+    .exec-grid { grid-template-columns: 1fr; }
+    .recon-item { grid-template-columns: 1fr; gap: 0.5rem; }
+    .flow-chain { flex-direction: column; }
+    .flow-arrow { transform: rotate(90deg); padding: 0.25rem 0; }
+    body { font-size: 16px; }
+  }
+
+  @media (max-width: 480px) {
+    .hero h1 { font-size: 2.2rem; }
+    .attempt-stamp { position: static; margin-bottom: 1rem; display: inline-block; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Progress Bar -->
+<div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+
+<!-- Chapter Nav -->
+<nav class="chapter-nav" id="chapterNav">
+  <a href="#problem" data-section="problem"><span class="label">The Problem</span><span class="dot"></span></a>
+  <a href="#attempt-1" data-section="attempt-1"><span class="label">Attempt 1</span><span class="dot"></span></a>
+  <a href="#attempt-2" data-section="attempt-2"><span class="label">Attempt 2</span><span class="dot"></span></a>
+  <a href="#recon" data-section="recon"><span class="label">Deep Recon</span><span class="dot"></span></a>
+  <a href="#discovery" data-section="discovery"><span class="label">Discovery</span><span class="dot"></span></a>
+  <a href="#solution" data-section="solution"><span class="label">The Solution</span><span class="dot"></span></a>
+  <a href="#why" data-section="why"><span class="label">Why It Works</span><span class="dot"></span></a>
+  <a href="#workflow" data-section="workflow"><span class="label">Final Workflow</span><span class="dot"></span></a>
+</nav>
+
+<!-- ==================== HERO ==================== -->
+<header class="hero">
+  <span class="hero-label">A Technical Exploration</span>
+  <h1>Hot-Swapping <em>Credentials</em> in a Docker Sandbox</h1>
+  <p class="hero-subtitle">How we solved credential expiry in Claude Code Docker sandboxes without destroying them.</p>
+  <div class="hero-scroll">
+    <span>Scroll to begin</span>
+    <div class="arrow"></div>
+  </div>
+</header>
+
+<!-- ==================== THE PROBLEM ==================== -->
+<section class="section" id="problem">
+  <div class="chapter-header reveal">
+    <span class="chapter-number">Chapter 01</span>
+    <h2 class="chapter-title">The Problem</h2>
+  </div>
+  <div class="prose">
+    <p class="reveal">AWS SSO credentials expire after a few hours. The Docker sandbox bakes environment variables in at creation time. When creds expire, Claude Code can't make Bedrock API calls.</p>
+    <p class="reveal">The only documented fix? <strong>Destroy the sandbox and recreate it</strong>&mdash;losing session history, installed plugins, and workspace state.</p>
+    <p class="reveal">We refused to accept that. This is the story of finding a better way.</p>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ==================== ATTEMPT 1 ==================== -->
+<section class="section" id="attempt-1">
+  <div class="chapter-header reveal">
+    <span class="chapter-number">Chapter 02</span>
+    <h2 class="chapter-title">The Persistent Env File</h2>
+  </div>
+  <div class="attempt-card failed reveal">
+    <span class="attempt-stamp dead-end">Dead End</span>
+    <h3>Write to the persistent env file</h3>
+    <div class="prose">
+      <p>We noticed <code>BASH_ENV=/etc/sandbox-persistent.sh</code> and <code>CLAUDE_ENV_FILE=/etc/sandbox-persistent.sh</code> in the container's environment. These are hooks&mdash;any new bash shell sources that file on startup.</p>
+      <p>The idea: write fresh credentials there, and Claude would pick them up.</p>
+      <p>We wrote the creds. Verified they were in the file. And it <strong>didn't work</strong>. Claude kept failing with expired token errors.</p>
+    </div>
+    <div class="callout failure">
+      <span class="callout-label">Why it failed</span>
+      <code>BASH_ENV</code> only gets sourced when a <em>new</em> bash shell starts. The Claude Code process was already running with the old env vars baked into its process environment. There's no mechanism in Linux to change a running process's environment from outside.
+    </div>
+    <div class="callout insight">
+      <span class="callout-label">Takeaway</span>
+      The file was a good idea for tools Claude <em>spawns</em> (bash commands), but not for Claude's own API calls.
+    </div>
+  </div>
+</section>
+
+<!-- ==================== ATTEMPT 2 ==================== -->
+<section class="section" id="attempt-2">
+  <div class="chapter-header reveal">
+    <span class="chapter-number">Chapter 03</span>
+    <h2 class="chapter-title">Kill and Reconnect</h2>
+  </div>
+  <div class="attempt-card failed reveal">
+    <span class="attempt-stamp dead-end">Dead End</span>
+    <h3>Kill the Claude process, then reconnect</h3>
+    <div class="prose">
+      <p>If the running process has stale env, kill it. When the user reconnects via <code>docker sandbox run</code>, the sandbox should spawn a new Claude process that sources <code>sandbox-persistent.sh</code> and gets fresh creds.</p>
+      <p>We killed both Claude processes (there were two&mdash;from separate connections). The container stayed alive because PID&nbsp;1 is a watcher script, not Claude. We reconnected, and it <strong>still didn't work</strong>.</p>
+    </div>
+    <div class="callout failure">
+      <span class="callout-label">Why it failed</span>
+      <code>docker sandbox run</code> launches Claude via the container's CMD: <code>claude --dangerously-skip-permissions</code>. That's a direct exec of the binary&mdash;no bash involved, so <code>BASH_ENV</code> is never sourced. The new Claude process inherited the container's <em>original</em> environment (set by <code>-e</code> flags at creation time), not the file contents.
+    </div>
+    <div class="callout insight">
+      <span class="callout-label">Takeaway</span>
+      The process starts clean from the container env, not from any shell profile. Writing to a file doesn't matter if nothing reads it.
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ==================== DEEP RECON ==================== -->
+<section class="section section-wide" id="recon">
+  <div class="chapter-header reveal">
+    <span class="chapter-number">Chapter 04</span>
+    <h2 class="chapter-title">The Deep Recon</h2>
+  </div>
+  <div class="prose reveal">
+    <p>Two attempts down. Time to stop guessing and fully map the sandbox internals. We ran a systematic capability audit:</p>
+  </div>
+
+  <div class="recon-grid">
+    <div class="recon-item reveal">
+      <span class="recon-cmd">whoami</span>
+      <span class="recon-result">User <code>agent</code>, uid 1000, in groups <code>sudo</code> and <code>docker</code></span>
+    </div>
+    <div class="recon-item reveal pivotal">
+      <span class="recon-cmd">sudo -l</span>
+      <span class="recon-result"><span class="highlight">(ALL) NOPASSWD: ALL</span>&mdash;Full passwordless root. This was the key discovery.</span>
+    </div>
+    <div class="recon-item reveal">
+      <span class="recon-cmd">/proc/.../environ</span>
+      <span class="recon-result">Readable but not writable. Can't directly modify the running process's env.</span>
+    </div>
+    <div class="recon-item reveal">
+      <span class="recon-cmd">/proc/.../mem</span>
+      <span class="recon-result">Writable (owned by <code>agent</code>). Could theoretically patch memory&mdash;incredibly fragile and complex.</span>
+    </div>
+    <div class="recon-item reveal">
+      <span class="recon-cmd">nsenter</span>
+      <span class="recon-result">Available. Could enter the process's namespace, but still can't change its env vars.</span>
+    </div>
+    <div class="recon-item reveal">
+      <span class="recon-cmd">gdb / strace</span>
+      <span class="recon-result">Not installed. No easy way to attach and inject env vars into the running process.</span>
+    </div>
+    <div class="recon-item reveal pivotal">
+      <span class="recon-cmd">which claude</span>
+      <span class="recon-result"><span class="highlight">This was the pivotal moment.</span></span>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== THE DISCOVERY ==================== -->
+<section class="section discovery-section" id="discovery">
+  <div class="chapter-header reveal">
+    <span class="chapter-number">Chapter 05</span>
+    <h2 class="chapter-title">The Pivotal Discovery</h2>
+  </div>
+  <div class="prose reveal">
+    <p><code>claude</code> was a symlink:</p>
+  </div>
+
+  <div class="terminal reveal">
+    <div class="terminal-bar">
+      <div class="dots"><span></span><span></span><span></span></div>
+      <span class="title">agent@sandbox</span>
+    </div>
+    <pre><span class="prompt">$</span> <span class="cmd">ls -la</span> <span class="path">/home/agent/.local/bin/claude</span>
+<span class="path">/home/agent/.local/bin/claude</span> -> <span class="string">/home/agent/.local/share/claude/versions/2.1.42</span>
+
+<span class="prompt">$</span> <span class="cmd">file</span> <span class="path">/home/agent/.local/share/claude/versions/2.1.42</span>
+ELF 64-bit LSB executable <span class="comment"># compiled binary, not a script</span></pre>
+  </div>
+
+  <div class="prose reveal">
+    <p>A compiled ELF binary. We couldn't edit it to add <code>source</code> logic.</p>
+    <p>But then the realization hit:</p>
+  </div>
+
+  <div class="callout success-note reveal" style="font-size: 1.1rem; padding: 2rem;">
+    <span class="callout-label">The Insight</span>
+    <strong>We don't need to modify the binary. We need to control what happens <em>before</em> the binary runs.</strong> The symlink is just a pointer. We can point it somewhere else.
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ==================== THE SOLUTION ==================== -->
+<section class="section section-wide" id="solution">
+  <div class="chapter-header reveal">
+    <span class="chapter-number">Chapter 06</span>
+    <h2 class="chapter-title">Shim the Symlink</h2>
+  </div>
+
+  <div class="attempt-card success reveal">
+    <span class="attempt-stamp breakthrough">Breakthrough</span>
+    <h3>The solution</h3>
+    <div class="prose">
+      <p>The logic was clean: the sandbox always invokes <code>claude</code> by name. It resolves to a symlink we can change. If we replace the target with a bash wrapper that sources the env file and then exec's the real binary, every future launch gets fresh creds.</p>
+    </div>
+  </div>
+
+  <div class="diagram reveal">
+    <span class="diagram-title">Execution Flow &mdash; After the Shim</span>
+    <div class="flow-chain">
+      <div class="flow-node cmd">$ claude</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-node wrapper">wrapper.sh</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-node env">source creds</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-node binary">exec claude.real</div>
+    </div>
+  </div>
+
+  <ol class="steps-list">
+    <li class="reveal">
+      <h4>Back up the real binary</h4>
+      <div class="terminal" style="margin: 0.75rem 0 0;">
+        <div class="terminal-bar"><div class="dots"><span></span><span></span><span></span></div><span class="title">agent@sandbox</span></div>
+        <pre><span class="prompt">$</span> <span class="cmd">sudo cp</span> <span class="path">/home/agent/.local/share/claude/versions/2.1.42</span> \
+       <span class="path">/home/agent/.local/share/claude/versions/2.1.42.real</span></pre>
+      </div>
+    </li>
+    <li class="reveal">
+      <h4>Write the wrapper script</h4>
+      <div class="terminal" style="margin: 0.75rem 0 0;">
+        <div class="terminal-bar"><div class="dots"><span></span><span></span><span></span></div><span class="title">claude-wrapper</span></div>
+        <pre><span class="comment">#!/bin/bash</span>
+<span class="cmd">source</span> <span class="path">/etc/sandbox-persistent.sh</span> <span class="comment">2>/dev/null</span>
+<span class="cmd">exec</span> <span class="path">/home/agent/.local/share/claude/versions/2.1.42.real</span> <span class="string">"$@"</span></pre>
+      </div>
+      <p style="margin-top: 0.75rem;">Sources the credential file, then <code>exec</code>'s the real binary. The wrapper disappears&mdash;Claude inherits the fresh env vars.</p>
+    </li>
+    <li class="reveal">
+      <h4>Repoint the symlink</h4>
+      <div class="terminal" style="margin: 0.75rem 0 0;">
+        <div class="terminal-bar"><div class="dots"><span></span><span></span><span></span></div><span class="title">before &rarr; after</span></div>
+        <pre><span class="comment"># Before:</span>
+claude -> <span class="path">/home/agent/.local/share/claude/versions/2.1.42</span>  <span class="comment">(ELF binary)</span>
+
+<span class="comment"># After:</span>
+claude -> <span class="string">/home/agent/.local/bin/claude-wrapper</span>  <span class="comment">(bash shim)</span></pre>
+      </div>
+    </li>
+    <li class="reveal">
+      <h4>Kill the stale process, reconnect</h4>
+      <p>The running Claude still has stale creds&mdash;nothing can fix that. Kill it, reconnect, and the sandbox invokes <code>claude</code> &rarr; wrapper &rarr; fresh creds &rarr; real binary.</p>
+    </li>
+  </ol>
+</section>
+
+<!-- ==================== WHY IT WORKS ==================== -->
+<section class="section" id="why">
+  <div class="chapter-header reveal">
+    <span class="chapter-number">Chapter 07</span>
+    <h2 class="chapter-title">Why It Works</h2>
+  </div>
+
+  <div class="prose reveal">
+    <h3 style="font-family: 'Instrument Serif', Georgia, serif; font-size: 1.4rem; font-weight: 400; margin-bottom: 1.5rem;">Why <code>exec</code> matters</h3>
+    <p>The wrapper uses <code>exec</code>, not a plain call. <code>exec</code> <em>replaces</em> the current process with the new one&mdash;the wrapper disappears and the real Claude binary takes over completely.</p>
+  </div>
+
+  <div class="exec-grid reveal">
+    <div class="exec-item">
+      <span class="exec-check">&check;</span>
+      <span>No extra process lingering</span>
+    </div>
+    <div class="exec-item">
+      <span class="exec-check">&check;</span>
+      <span>Claude doesn't know it was shimmed</span>
+    </div>
+    <div class="exec-item">
+      <span class="exec-check">&check;</span>
+      <span>Process tree looks normal</span>
+    </div>
+    <div class="exec-item">
+      <span class="exec-check">&check;</span>
+      <span>Signal handling works correctly</span>
+    </div>
+  </div>
+
+  <div class="prose reveal" style="margin-top: 3rem;">
+    <h3 style="font-family: 'Instrument Serif', Georgia, serif; font-size: 1.4rem; font-weight: 400; margin-bottom: 1.5rem;">Three things that made it possible</h3>
+    <p>If any of these were missing, the approach wouldn't work:</p>
+  </div>
+
+  <div class="pillars reveal">
+    <div class="pillar">
+      <span class="pillar-icon" style="color: var(--amber);">&numero;</span>
+      <h4>Passwordless Sudo</h4>
+      <p>Needed to manipulate the symlink and binary owned by the install</p>
+    </div>
+    <div class="pillar">
+      <span class="pillar-icon" style="color: var(--green);">&equiv;</span>
+      <h4>Writable Env File</h4>
+      <p><code>/etc/sandbox-persistent.sh</code> exists and is writable by <code>agent</code></p>
+    </div>
+    <div class="pillar">
+      <span class="pillar-icon" style="color: var(--red);">&oplus;</span>
+      <h4>Symlink Resolution</h4>
+      <p>Claude is invoked via a symlink we can redirect, not a hardcoded path</p>
+    </div>
+  </div>
+
+  <div class="prose reveal" style="margin-top: 1.5rem;">
+    <p>The sudo access was the most surprising&mdash;it's there because the sandbox is designed to be a throwaway environment where the agent needs to install packages freely.</p>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ==================== FINAL WORKFLOW ==================== -->
+<section class="section" id="workflow">
+  <div class="chapter-header reveal">
+    <span class="chapter-number">Chapter 08</span>
+    <h2 class="chapter-title">The Final Workflow</h2>
+  </div>
+
+  <div class="prose reveal">
+    <p>No sandbox destruction. Session history, installed packages, workspace state&mdash;all preserved. The refresh workflow from the host:</p>
+  </div>
+
+  <div class="workflow-block reveal">
+    <div class="terminal" style="margin: 0; border: none;">
+      <div class="terminal-bar">
+        <div class="dots"><span></span><span></span><span></span></div>
+        <span class="title">host machine &mdash; credential refresh</span>
+      </div>
+      <pre><span class="comment"># 1. Export fresh creds</span>
+<span class="cmd">eval</span> <span class="string">"$(aws configure export-credentials --profile YOUR_PROFILE --format env)"</span>
+
+<span class="comment"># 2. Write them into the sandbox</span>
+<span class="cmd">docker exec</span> <span class="flag">SANDBOX_ID</span> <span class="cmd">bash -c</span> <span class="string">"cat > /etc/sandbox-persistent.sh << EOF
+export AWS_ACCESS_KEY_ID=\"$AWS_ACCESS_KEY_ID\"
+export AWS_SECRET_ACCESS_KEY=\"$AWS_SECRET_ACCESS_KEY\"
+export AWS_SESSION_TOKEN=\"$AWS_SESSION_TOKEN\"
+EOF"</span>
+
+<span class="comment"># 3. Kill the Claude process</span>
+<span class="cmd">docker exec</span> <span class="flag">SANDBOX_ID</span> <span class="cmd">pkill</span> claude
+
+<span class="comment"># 4. Reconnect — wrapper sources fresh creds automatically</span>
+<span class="cmd">docker sandbox run</span> <span class="flag">...</span> claude .</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== FOOTER ==================== -->
+<footer class="footer">
+  <p>An exploration by Chris &amp; Claude</p>
+</footer>
+
+<script>
+(function() {
+  // Progress bar
+  const progressBar = document.getElementById('progressBar');
+  function updateProgress() {
+    const scrollTop = window.scrollY;
+    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    const progress = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
+    progressBar.style.width = progress + '%';
+  }
+
+  // Reveal on scroll
+  const reveals = document.querySelectorAll('.reveal');
+  const observerOptions = { threshold: 0.12, rootMargin: '0px 0px -40px 0px' };
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, observerOptions);
+  reveals.forEach(el => observer.observe(el));
+
+  // Chapter nav active state
+  const navLinks = document.querySelectorAll('.chapter-nav a');
+  const sections = [];
+  navLinks.forEach(link => {
+    const id = link.getAttribute('data-section');
+    const section = document.getElementById(id);
+    if (section) sections.push({ id, el: section, link });
+  });
+
+  function updateNav() {
+    const scrollY = window.scrollY + window.innerHeight * 0.4;
+    let active = sections[0];
+    sections.forEach(s => {
+      if (s.el.offsetTop <= scrollY) active = s;
+    });
+    navLinks.forEach(l => l.classList.remove('active'));
+    if (active) active.link.classList.add('active');
+  }
+
+  // Throttled scroll
+  let ticking = false;
+  window.addEventListener('scroll', () => {
+    if (!ticking) {
+      requestAnimationFrame(() => {
+        updateProgress();
+        updateNav();
+        ticking = false;
+      });
+      ticking = true;
+    }
+  });
+
+  updateProgress();
+  updateNav();
+})();
+</script>
+</body>
+</html>
