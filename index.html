@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stories</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+  :root {
+    --bg-deep: #07070c;
+    --bg-surface: #0e0e16;
+    --bg-elevated: #14141f;
+    --amber: #d4a574;
+    --amber-bright: #e8c88a;
+    --amber-dim: #9a7450;
+    --green: #5a9c6b;
+    --green-bright: #7dd694;
+    --text-primary: #e0d8cc;
+    --text-secondary: #8a8478;
+    --text-dim: #5a564e;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 18px;
+    line-height: 1.75;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 256px 256px;
+  }
+
+  .page {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 8rem 2rem 4rem;
+  }
+
+  .site-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.35em;
+    text-transform: uppercase;
+    color: var(--amber-dim);
+    margin-bottom: 1.5rem;
+    opacity: 0;
+    animation: fadeUp 0.8s ease 0.2s forwards;
+  }
+
+  h1 {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-size: clamp(2.8rem, 6vw, 4.5rem);
+    font-weight: 400;
+    line-height: 1.1;
+    color: var(--text-primary);
+    margin-bottom: 1.5rem;
+    opacity: 0;
+    animation: fadeUp 0.8s ease 0.4s forwards;
+  }
+
+  .subtitle {
+    font-size: 1.1rem;
+    color: var(--text-secondary);
+    max-width: 48ch;
+    margin-bottom: 5rem;
+    font-weight: 300;
+    opacity: 0;
+    animation: fadeUp 0.8s ease 0.6s forwards;
+  }
+
+  .stories-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .story-card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    background: var(--bg-surface);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 12px;
+    padding: 2.25rem 2.5rem;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+    opacity: 0;
+    animation: fadeUp 0.7s ease 0.8s forwards;
+  }
+
+  .story-card:hover {
+    border-color: var(--amber-dim);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.3), 0 0 0 1px var(--amber-dim);
+  }
+
+  .story-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--amber-dim), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .story-card:hover::before {
+    opacity: 1;
+  }
+
+  .story-meta {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .story-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--green-bright);
+    background: rgba(90, 156, 107, 0.1);
+    border: 1px solid rgba(90, 156, 107, 0.15);
+    padding: 0.2rem 0.6rem;
+    border-radius: 3px;
+  }
+
+  .story-date {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 0.05em;
+  }
+
+  .story-card h2 {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-size: 1.6rem;
+    font-weight: 400;
+    line-height: 1.25;
+    margin-bottom: 0.75rem;
+    transition: color 0.3s;
+  }
+
+  .story-card:hover h2 {
+    color: var(--amber-bright);
+  }
+
+  .story-summary {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    line-height: 1.65;
+  }
+
+  .story-read {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1.25rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--amber-dim);
+    transition: color 0.3s, gap 0.3s;
+  }
+
+  .story-card:hover .story-read {
+    color: var(--amber);
+    gap: 0.75rem;
+  }
+
+  .footer {
+    text-align: center;
+    padding: 5rem 2rem 3rem;
+  }
+
+  .footer p {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (max-width: 600px) {
+    .page { padding: 5rem 1.5rem 3rem; }
+    .story-card { padding: 1.75rem 1.5rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <span class="site-label">Technical Explorations</span>
+  <h1>Stories</h1>
+  <p class="subtitle">Accounts of digging into systems, solving problems, and finding things out the hard way.</p>
+
+  <div class="stories-list">
+    <a href="hot-swapping-credentials-docker-sandbox/" class="story-card">
+      <div class="story-meta">
+        <span class="story-tag">Docker</span>
+        <span class="story-date">2025</span>
+      </div>
+      <h2>Hot-Swapping Credentials in a Docker Sandbox</h2>
+      <p class="story-summary">AWS SSO credentials expire. Docker sandboxes bake env vars at creation. The documented fix is destruction. We found a better way.</p>
+      <span class="story-read">Read story &rarr;</span>
+    </a>
+  </div>
+</div>
+
+<footer class="footer">
+  <p>Chris &amp; Claude</p>
+</footer>
+
+</body>
+</html>
